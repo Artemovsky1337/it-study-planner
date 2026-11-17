@@ -1,5 +1,40 @@
+// ===== Подключение Firebase (SDK подгружается с CDN, сборка не нужна) =====
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  onSnapshot,
+  query,
+  orderBy
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+// Публичный конфиг веб-приложения (не секретный, защита делается правилами Firestore)
+const firebaseConfig = {
+  apiKey: "AIzaSyDK7Vxlq3gtZTD5FG4tDFIs9ZQhPF9smBs",
+  authDomain: "it-study-planner.firebaseapp.com",
+  projectId: "it-study-planner",
+  storageBucket: "it-study-planner.firebasestorage.app",
+  messagingSenderId: "35536142905",
+  appId: "1:35536142905:web:e35a4e70549654fe4a43e8",
+  measurementId: "G-F2E2VD4ZJR"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
 // ===== Настройки =====
-const STORAGE_KEY = "itStudyPlannerTasks";
 const CATEGORIES = ["HTML", "CSS", "JavaScript", "Другое"];
 
 // CSS-класс для цветного бейджа каждой категории
@@ -10,12 +45,12 @@ const CATEGORY_CLASSES = {
   "Другое": "cat-other"
 };
 
-// Стартовые задачи (показываются при первом запуске)
+// Стартовые задачи (создаются один раз при первом запуске нового пользователя)
 const defaultTasks = [
-  { id: 1, text: "Повторить основы HTML", category: "HTML", completed: true },
-  { id: 2, text: "Разобраться с Flexbox", category: "CSS", completed: false },
-  { id: 3, text: "Написать первое приложение", category: "JavaScript", completed: false },
-  { id: 4, text: "Подготовиться к контрольной", category: "Другое", completed: false }
+  { text: "Повторить основы HTML", category: "HTML", completed: true },
+  { text: "Разобраться с Flexbox", category: "CSS", completed: false },
+  { text: "Написать первое приложение", category: "JavaScript", completed: false },
+  { text: "Подготовиться к контрольной", category: "Другое", completed: false }
 ];
 
 // ===== Находим элементы страницы =====
@@ -36,46 +71,90 @@ const confirmBox = document.querySelector("#confirmBox");
 const confirmYes = document.querySelector("#confirmYes");
 const confirmNo = document.querySelector("#confirmNo");
 
-// ===== Работа с localStorage =====
-
-// Загружаем задачи. Если данных нет или localStorage недоступен,
-// берём стартовые задачи
-function loadTasks() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) {
-      return defaultTasks;
-    }
-    const parsed = JSON.parse(saved);
-    if (!Array.isArray(parsed)) {
-      return defaultTasks;
-    }
-    // Проверяем каждую задачу и подставляем категорию по умолчанию
-    return parsed
-      .filter(task => task && typeof task.text === "string")
-      .map(task => ({
-        id: task.id,
-        text: task.text,
-        category: CATEGORIES.includes(task.category) ? task.category : "Другое",
-        completed: Boolean(task.completed)
-      }));
-  } catch (error) {
-    return defaultTasks;
-  }
-}
-
-// Сохраняем массив задач в браузере
-function saveTasks() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  } catch (error) {
-    // Если сохранение запрещено, приложение продолжит работать без него
-  }
-}
-
 // ===== Данные приложения =====
-let tasks = loadTasks();
+let tasks = [];            // обновляется из Firestore в реальном времени
+let isLoaded = false;      // пришли ли данные из базы
+let currentUid = null;     // id анонимного пользователя
+let tasksCollection = null;
 let currentFilter = "all"; // all, active или completed
+
+// ===== Работа с Firestore =====
+// Структура: users/{uid}/tasks/{taskId}
+
+function taskRef(id) {
+  return doc(db, "users", currentUid, "tasks", id);
+}
+
+// Приводим документ из базы к нормальному виду
+function normalizeTask(id, data) {
+  return {
+    id: id,
+    text: typeof data.text === "string" ? data.text : "",
+    category: CATEGORIES.includes(data.category) ? data.category : "Другое",
+    completed: Boolean(data.completed)
+  };
+}
+
+// Создаём стартовые задачи и отметку, что это уже сделано
+async function seedDefaultTasks(userRef) {
+  const batch = writeBatch(db);
+  batch.set(userRef, { seeded: true });
+  const now = Date.now();
+  defaultTasks.forEach((task, index) => {
+    batch.set(doc(tasksCollection), {
+      text: task.text,
+      category: task.category,
+      completed: task.completed,
+      createdAt: now + index
+    });
+  });
+  await batch.commit();
+}
+
+// Запускаем работу с базой для текущего пользователя
+async function startForUser(uid) {
+  currentUid = uid;
+  tasksCollection = collection(db, "users", uid, "tasks");
+
+  try {
+    const userRef = doc(db, "users", uid);
+    const userSnapshot = await getDoc(userRef);
+    if (!userSnapshot.exists()) {
+      await seedDefaultTasks(userRef);
+    }
+  } catch (error) {
+    console.error(error);
+    showStatusError("Не удалось подключиться к базе данных. Проверьте правила Firestore.");
+    return;
+  }
+
+  // Подписка на изменения: список обновляется сам
+  const tasksQuery = query(tasksCollection, orderBy("createdAt"));
+  onSnapshot(
+    tasksQuery,
+    snapshot => {
+      tasks = snapshot.docs.map(item => normalizeTask(item.id, item.data()));
+      isLoaded = true;
+      renderTasks();
+    },
+    error => {
+      console.error(error);
+      showStatusError("Не удалось загрузить задачи из базы данных.");
+    }
+  );
+}
+
+// Анонимный вход: логин и пароль не нужны, у каждого браузера свой список
+onAuthStateChanged(auth, user => {
+  if (user && user.uid !== currentUid) {
+    startForUser(user.uid);
+  }
+});
+
+signInAnonymously(auth).catch(error => {
+  console.error(error);
+  showStatusError("Не удалось выполнить вход. Включите Anonymous в Authentication.");
+});
 
 // ===== Статистика и прогресс =====
 // Считается по всем задачам, независимо от выбранного фильтра
@@ -156,7 +235,10 @@ function renderTasks() {
   });
 
   // Сообщение, если показывать нечего
-  if (tasks.length === 0) {
+  if (!isLoaded) {
+    emptyMessage.textContent = "Загружаем задачи...";
+    emptyMessage.hidden = false;
+  } else if (tasks.length === 0) {
     emptyMessage.textContent = "Пока задач нет. Добавьте первую!";
     emptyMessage.hidden = false;
   } else if (visibleTasks.length === 0) {
@@ -169,19 +251,28 @@ function renderTasks() {
   updateStatistics();
 }
 
-// ===== Действия с задачами =====
+// ===== Сообщения об ошибках =====
 
-// Показываем и убираем сообщение об ошибке
+// Ошибка валидации поля (красная рамка)
 function showError(message) {
   errorMessage.textContent = message;
   errorMessage.hidden = false;
   taskInput.classList.add("invalid");
 }
 
+// Ошибка связи с базой (без рамки у поля)
+function showStatusError(message) {
+  errorMessage.textContent = message;
+  errorMessage.hidden = false;
+}
+
 function clearError() {
   errorMessage.hidden = true;
   taskInput.classList.remove("invalid");
 }
+
+// ===== Действия с задачами =====
+// Запись в Firestore не блокирует интерфейс: список обновится сам через onSnapshot
 
 // Добавление задачи
 function addTask(event) {
@@ -196,17 +287,22 @@ function addTask(event) {
     return;
   }
 
+  if (!tasksCollection) {
+    showStatusError("Подключение к базе ещё не готово, попробуйте через секунду.");
+    return;
+  }
+
   clearError();
 
-  tasks.push({
-    id: Date.now(),
+  addDoc(tasksCollection, {
     text: text,
     category: categorySelect.value,
-    completed: false
+    completed: false,
+    createdAt: Date.now()
+  }).catch(error => {
+    console.error(error);
+    showStatusError("Не удалось сохранить задачу.");
   });
-
-  saveTasks();
-  renderTasks();
 
   taskInput.value = "";
   taskInput.focus();
@@ -215,18 +311,31 @@ function addTask(event) {
 // Переключение выполнения задачи
 function toggleTask(id) {
   const task = tasks.find(item => item.id === id);
-  if (task) {
-    task.completed = !task.completed;
-    saveTasks();
-    renderTasks();
+  if (!task) {
+    return;
   }
+  updateDoc(taskRef(id), { completed: !task.completed }).catch(error => {
+    console.error(error);
+    showStatusError("Не удалось обновить задачу.");
+  });
 }
 
 // Удаление одной задачи
 function deleteTask(id) {
-  tasks = tasks.filter(item => item.id !== id);
-  saveTasks();
-  renderTasks();
+  deleteDoc(taskRef(id)).catch(error => {
+    console.error(error);
+    showStatusError("Не удалось удалить задачу.");
+  });
+}
+
+// Удаление всех задач (пакетами, в Firestore лимит 500 операций на пакет)
+async function deleteAllTasks() {
+  const ids = tasks.map(task => task.id);
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = writeBatch(db);
+    ids.slice(i, i + 400).forEach(id => batch.delete(taskRef(id)));
+    await batch.commit();
+  }
 }
 
 // ===== Очистка списка с подтверждением =====
@@ -268,10 +377,11 @@ filterButtons.forEach(button => {
 clearButton.addEventListener("click", showConfirm);
 confirmNo.addEventListener("click", hideConfirm);
 confirmYes.addEventListener("click", () => {
-  tasks = [];
-  saveTasks();
   hideConfirm();
-  renderTasks();
+  deleteAllTasks().catch(error => {
+    console.error(error);
+    showStatusError("Не удалось очистить список.");
+  });
 });
 
 // ===== Первоначальное отображение =====
