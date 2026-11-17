@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IT Study Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Шапка с названием и навигацией -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <h1>IT Study Planner</h1>
+        <p>Учебный план Артема</p>
+      </div>
+      <nav class="nav" aria-label="Навигация по странице">
+        <a href="#add">Новая задача</a>
+        <a href="#stats">Статистика</a>
+        <a href="#tasks">Мои задачи</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Форма добавления задачи -->
+    <section id="add" class="card">
+      <h2>Новая задача</h2>
+      <form id="taskForm" class="task-form" novalidate>
+        <input
+          type="text"
+          id="taskInput"
+          placeholder="Введите учебную задачу"
+          maxlength="100"
+          autocomplete="off"
+          aria-label="Название задачи">
+
+        <select id="categorySelect" aria-label="Категория задачи">
+          <option value="HTML">HTML</option>
+          <option value="CSS">CSS</option>
+          <option value="JavaScript">JavaScript</option>
+          <option value="Другое">Другое</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Добавить</button>
+      </form>
+      <!-- Сообщение об ошибке (пустое поле) -->
+      <p id="errorMessage" class="error-message" role="alert" hidden></p>
+    </section>
+
+    <!-- Статистика и прогресс -->
+    <section id="stats" class="card">
+      <h2>Статистика</h2>
+      <div class="stats-grid">
+        <div class="stat">
+          <span class="stat-value" id="total">0</span>
+          <span class="stat-label">Всего задач</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="completed">0</span>
+          <span class="stat-label">Выполнено</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="percent">0%</span>
+          <span class="stat-label">Процент выполнения</span>
+        </div>
+      </div>
+      <div
+        class="progress-bar"
+        role="progressbar"
+        aria-label="Прогресс выполнения"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        id="progressBar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </section>
+
+    <!-- Список задач -->
+    <section id="tasks" class="card">
+      <h2>Мои задачи</h2>
+
+      <div class="toolbar">
+        <!-- Фильтры -->
+        <div class="filters" role="group" aria-label="Фильтр задач">
+          <button type="button" class="filter-button active" data-filter="all" aria-pressed="true">Все</button>
+          <button type="button" class="filter-button" data-filter="active" aria-pressed="false">Активные</button>
+          <button type="button" class="filter-button" data-filter="completed" aria-pressed="false">Выполненные</button>
+        </div>
+
+        <!-- Очистка списка с подтверждением -->
+        <div class="clear-area">
+          <button type="button" id="clearButton" class="btn btn-secondary">Очистить список</button>
+          <div id="confirmBox" class="confirm-box" hidden>
+            <span>Удалить все задачи?</span>
+            <button type="button" id="confirmYes" class="btn btn-danger">Да</button>
+            <button type="button" id="confirmNo" class="btn btn-secondary">Нет</button>
+          </div>
+        </div>
+      </div>
+
+      <ul id="taskList" class="task-list"></ul>
+      <p id="emptyMessage" class="empty-message"></p>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    © 2026 IT Study Planner
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
